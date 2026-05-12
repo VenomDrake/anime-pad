@@ -12,13 +12,23 @@ configData = defaultdict(dict)
 
 # controllo il tipo del dispositivo
 def get_os() -> str:
-    out = os.popen("uname -a").read().strip().split()
-    nome_os = out[0]
+    """Rileva il sistema operativo con alcune euristiche per ambienti mobile."""
+    out = os.popen("uname -a").read().strip()
+    parts = out.split()
+    nome_os = parts[0] if parts else os.name
+
     if nome_os == "Linux":
-        if "Android" == out[-1]:
-            nome_os = "Android"
-        elif "WSL" in out[2]:
-            nome_os = "WSL"
+        lower_out = out.lower()
+        if parts and parts[-1] == "Android":
+            return "Android"
+        if len(parts) > 2 and "WSL" in parts[2]:
+            return "WSL"
+
+        # iSH gira su iPadOS/iOS ma espone uname Linux; usiamo marker noti.
+        if "ish" in lower_out or os.environ.get("ISH_VERSION"):
+            device = os.environ.get("ISPAD", "").lower()
+            return "iPadOS" if device in {"1", "true", "yes"} else "iOS"
+
     return nome_os
 
 nome_os = get_os()

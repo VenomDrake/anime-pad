@@ -122,8 +122,11 @@ def downloadPath(create: bool = True) -> str:
         str: il percorso di download dell'anime.
     """
 
-    if (ut.nome_os == "Android"):
+    if ut.nome_os == "Android":
         path = f"/sdcard/Movies/Anime"
+    elif ut.nome_os in {"iOS", "iPadOS"}:
+        # Cartella persistente e accessibile in iSH su iPhone/iPad.
+        path = f"{Path.home()}/Documents/Anime"
     else:
         path = f"{Path.home()}/Videos/Anime"
     if create and not os.path.exists(path):

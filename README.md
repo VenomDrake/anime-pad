@@ -74,16 +74,24 @@ python3 -m pip install aw-cli
 ```
 </details>
 
-<details><summary><b>iOS</b></summary>
-La versione per iOS richiede <a href="https://apps.apple.com/it/app/ish-shell/id1436902243">iSH</a> e <a href="https://apps.apple.com/it/app/vlc-media-player/id650377962">VLC</a>. 
+<details><summary><b>iOS / iPadOS</b></summary>
+La versione per iOS/iPadOS richiede <a href="https://apps.apple.com/it/app/ish-shell/id1436902243">iSH</a> e <a href="https://apps.apple.com/it/app/vlc-media-player/id650377962">VLC</a>. 
 
 ```
 apk update
 apk upgrade
 apk add python3 python3-dev py3-pip gcc musl-dev git
-python3 -m pip install git+https://github.com/fexh10/aw-cli.git@iosCompatibility
+python3 -m pip install aw-cli
 ```
-Nota che la velocità di download e caricamento molto bassa è un problema di iSH e non di aw-cli. 
+Per forzare la modalità iPadOS in iSH: 
+
+```
+export ISPAD=1
+```
+
+In ambiente iOS/iPadOS, i download vengono salvati in `~/Documents/Anime`.
+
+Nota: velocità di download e caricamento possono essere basse per limiti di iSH.
 </details>
 
 ## Problemi noti
