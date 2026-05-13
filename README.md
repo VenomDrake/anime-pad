@@ -9,6 +9,7 @@ https://github.com/fexh10/aw-cli
 ## Installazione su iSH Shell
 
 Esegui questi comandi uno alla volta:
+````
 
 ```sh
 apk update
