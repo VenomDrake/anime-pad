@@ -1,7 +1,14 @@
 import os
 import re
-import toml
-import requests
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+    import toml
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
 from time import sleep
 from html import unescape
 from collections import defaultdict
@@ -26,6 +33,7 @@ def get_os() -> str:
 
         # iSH gira su iPadOS/iOS ma espone uname Linux; usiamo marker noti.
         if "ish" in lower_out or os.environ.get("ISH_VERSION"):
+            # iPadOS condivide il kernel iOS in iSH: permetti override esplicito ISPAD.
             device = os.environ.get("ISPAD", "").lower()
             return "iPadOS" if device in {"1", "true", "yes"} else "iOS"
 
@@ -89,6 +97,10 @@ def getHtml(url: str) -> str:
         str: l'html della pagina web selezionata.
     """
     global cookies
+    if requests is None:
+        my_print("Errore: dipendenza 'requests' non installata", color="rosso")
+        exit()
+
     try:
         result = requests.get(url, headers=headers, cookies=cookies)
     except requests.exceptions.ConnectionError:
@@ -131,7 +143,7 @@ def search(input: str) -> list[Anime]:
     # prendo i link degli anime relativi alla ricerca
     for url, name in re.findall(r'<div class="inner">(?:.|\n)+?<a href="([^"]+)"\s+data-jtitle="[^"]+"\s+class="name">([^<]+)', html):
         if nome_os == "Android":
-            caratteri_proibiti = '"*/:<>?\|'
+            caratteri_proibiti = '"*/:<>?\\|'
             caratteri_rimpiazzo = '”⁎∕꞉‹›︖＼⏐'
             for a, b in zip(caratteri_proibiti, caratteri_rimpiazzo):
                 name = name.replace(a, b)
@@ -266,8 +278,11 @@ def getConfig() -> None:
     
     configPath = f"{os.path.dirname(__file__)}/config.toml"
     
-    with open(configPath, 'r') as f:
-        configData = toml.load(f)
+    with open(configPath, 'rb') as f:
+        if tomllib is not None:
+            configData = tomllib.load(f)
+        else:
+            configData = toml.load(f)
     
     if nome_os == "WSL": 
         configData["player"]["path"] = f'''"$(wslpath '{configData["player"]["path"]}')"'''

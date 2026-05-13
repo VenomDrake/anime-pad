@@ -3,7 +3,6 @@ import re
 import csv
 from signal import signal, SIGINT
 from concurrent.futures import ThreadPoolExecutor
-from pySmartDL import SmartDL
 from pathlib import Path
 from threading import Thread
 from awcli import anilist, utilities as ut
@@ -150,6 +149,7 @@ def scaricaEpisodio(ep: int, path: str):
     # se l'episodio non è ancora stato scaricato lo scarico, altrimenti skippo
     ut.my_print(nome_video, color="blu", end=":\n")
     if not os.path.exists(f"{path}/{nome_video}.mp4"):
+        from pySmartDL import SmartDL
         SDL = SmartDL(url_ep, f"{path}/{nome_video}.mp4")
         SDL.start()
     else:
@@ -625,7 +625,9 @@ def main():
 
     ut.getConfig()
    
-    openPlayer = lambda url_ep, nome_video, progress: os.system(f"printf \"\e]8;;vlc://%s\a~~~~~~~~~~~~~~~~~~~~\n~ Premi per aprire VLC ~\n~~~~~~~~~~~~~~~~~~~~\e]8;;\a\n\" \"{url_ep}\"")
+    openPlayer = lambda url_ep, nome_video, progress: os.system(
+        f"printf \"\\033]8;;vlc://%s\\a~~~~~~~~~~~~~~~~~~~~\\n~ Premi per aprire VLC ~\\n~~~~~~~~~~~~~~~~~~~~\\033]8;;\\a\\n\" \"{url_ep}\""
+    )
 
     if nome_os != "Android" and args.syncpl:
         openPlayer = openSyncplay

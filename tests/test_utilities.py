@@ -9,9 +9,9 @@ TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 # Definisce la fixture mock_get
 @pytest.fixture
 def mock_get():
-    with patch('requests.get') as mock:
-        mock.return_value.status_code = 200
-        yield mock
+    with patch('awcli.utilities.requests') as mock_requests:
+        mock_requests.get.return_value.status_code = 200
+        yield mock_requests.get
 
 @pytest.mark.parametrize("input,expected", [
     ("search_onepiece", ['One Piece','One Piece (ITA)','One Piece: Episode of Skypiea','One Piece 3D2Y: Superare la Morte di Ace! Rufy e il Giuramento Fatto ai Compagni','One Piece Movie 14: Stampede', 'One Piece: Barto no Himitsu no Heya!','One Piece Movie 15: Red']),
@@ -73,3 +73,17 @@ def test_my_input(input_mock, input_str, format_func, input_values, expected_out
     # Verifica che il risultato sia corretto
     assert result == expected_output
 
+
+
+@patch("os.popen")
+def test_get_os_detects_ipados(mock_popen):
+    mock_popen.return_value.read.return_value = "Linux ish 1.0.0 #1"
+    with patch.dict(os.environ, {"ISPAD": "1"}, clear=False):
+        assert utilities.get_os() == "iPadOS"
+
+
+@patch("os.popen")
+def test_get_os_detects_ios(mock_popen):
+    mock_popen.return_value.read.return_value = "Linux ish 1.0.0 #1"
+    with patch.dict(os.environ, {}, clear=True):
+        assert utilities.get_os() == "iOS"
