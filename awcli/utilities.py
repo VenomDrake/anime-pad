@@ -1,7 +1,14 @@
 import os
 import re
-import toml
-import requests
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+    import toml
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
 from time import sleep
 from html import unescape
 from collections import defaultdict
@@ -12,13 +19,24 @@ configData = defaultdict(dict)
 
 # controllo il tipo del dispositivo
 def get_os() -> str:
-    out = os.popen("uname -a").read().strip().split()
-    nome_os = out[0]
+    """Rileva il sistema operativo con alcune euristiche per ambienti mobile."""
+    out = os.popen("uname -a").read().strip()
+    parts = out.split()
+    nome_os = parts[0] if parts else os.name
+
     if nome_os == "Linux":
-        if "Android" == out[-1]:
-            nome_os = "Android"
-        elif "WSL" in out[2]:
-            nome_os = "WSL"
+        lower_out = out.lower()
+        if parts and parts[-1] == "Android":
+            return "Android"
+        if len(parts) > 2 and "WSL" in parts[2]:
+            return "WSL"
+
+        # iSH gira su iPadOS/iOS ma espone uname Linux; usiamo marker noti.
+        if "ish" in lower_out or os.environ.get("ISH_VERSION"):
+            # iPadOS condivide il kernel iOS in iSH: permetti override esplicito ISPAD.
+            device = os.environ.get("ISPAD", "").lower()
+            return "iPadOS" if device in {"1", "true", "yes"} else "iOS"
+
     return nome_os
 
 nome_os = get_os()
@@ -79,6 +97,10 @@ def getHtml(url: str) -> str:
         str: l'html della pagina web selezionata.
     """
     global cookies
+    if requests is None:
+        my_print("Errore: dipendenza 'requests' non installata", color="rosso")
+        exit()
+
     try:
         result = requests.get(url, headers=headers, cookies=cookies)
     except requests.exceptions.ConnectionError:
@@ -121,7 +143,7 @@ def search(input: str) -> list[Anime]:
     # prendo i link degli anime relativi alla ricerca
     for url, name in re.findall(r'<div class="inner">(?:.|\n)+?<a href="([^"]+)"\s+data-jtitle="[^"]+"\s+class="name">([^<]+)', html):
         if nome_os == "Android":
-            caratteri_proibiti = '"*/:<>?\|'
+            caratteri_proibiti = '"*/:<>?\\|'
             caratteri_rimpiazzo = '”⁎∕꞉‹›︖＼⏐'
             for a, b in zip(caratteri_proibiti, caratteri_rimpiazzo):
                 name = name.replace(a, b)
@@ -256,8 +278,11 @@ def getConfig() -> None:
     
     configPath = f"{os.path.dirname(__file__)}/config.toml"
     
-    with open(configPath, 'r') as f:
-        configData = toml.load(f)
+    with open(configPath, 'rb') as f:
+        if tomllib is not None:
+            configData = tomllib.load(f)
+        else:
+            configData = toml.load(f)
     
     if nome_os == "WSL": 
         configData["player"]["path"] = f'''"$(wslpath '{configData["player"]["path"]}')"'''

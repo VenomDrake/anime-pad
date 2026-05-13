@@ -1,7 +1,15 @@
-import requests
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
 
 class TokenError(Exception):
     pass
+
+
+def _ensure_requests() -> None:
+    if requests is None:
+        raise TokenError("Errore: dipendenza 'requests' non installata")
 
 def updateAnilist(token, id_anilist: int, ep: int, status_list: str, score: float, favourite: bool = False) -> None:
     """
@@ -52,6 +60,7 @@ def getAnilistUserId(token) -> int:
         int: l'id dell'utente.
     """
 
+    _ensure_requests()
     query = """
         query {
             Viewer {
@@ -82,6 +91,7 @@ def getAnimePrivateRating(token, user_id, id_anime: int) -> float:
         float: il voto dell'utente.
     """
 
+    _ensure_requests()
     query = """
     query ($idAnime: Int, $userId: Int) {
         MediaList(userId: $userId, mediaId: $idAnime) {
@@ -116,6 +126,7 @@ def requestModifyAnilist(token, query: str, var: dict):
         var (dict): dizionario che contiene le variabili da passare alla query.
     """
 
+    _ensure_requests()
     header_anilist = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'}
     risposta = requests.post('https://graphql.anilist.co',headers=header_anilist,json={'query' : query, 'variables' : var})
     
