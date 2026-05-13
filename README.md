@@ -142,5 +142,3 @@ Configurazione:
 ## Crediti
 
 Progetto ispirato a [ani-cli](https://github.com/pystardust/ani-cli).
-
-Un ringraziamento speciale a [axtrat](https://github.com/axtrat) per l'aiuto nella realizzazione del progetto.
