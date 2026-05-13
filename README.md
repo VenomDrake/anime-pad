@@ -1,26 +1,30 @@
+Ecco il `README.md` aggiornato con i nuovi comandi per la tua repo `VenomDrake/anime-pad`.
+
 ````md
-# aw-cli per iOS e iPadOS tramite iSH Shell
+# anime-pad per iOS e iPadOS tramite iSH Shell
 
 Porting e adattamento non ufficiale di `aw-cli` per utilizzo su iOS e iPadOS tramite iSH Shell.
 
 Il progetto originale è disponibile qui:  
 https://github.com/fexh10/aw-cli
 
+Questa versione modificata è disponibile qui:  
+https://github.com/VenomDrake/anime-pad
+
 ## Installazione su iSH Shell
 
 Esegui questi comandi uno alla volta:
 ````
-
 ```sh
 apk update
-````
+```
 
 ```sh
 apk upgrade
 ```
 
 ```sh
-apk add python3 py3-pip fzf vlc
+apk add python3 py3-pip git fzf
 ```
 
 ```sh
@@ -28,12 +32,12 @@ python3 -m pip install --upgrade pip
 ```
 
 ```sh
-python3 -m pip install aw-cli
+python3 -m pip install git+https://github.com/VenomDrake/anime-pad.git
 ```
 
 ## Modalità iPadOS
 
-Per forzare la modalità iPadOS, consigliata su iPad:
+Per forzare la modalità iPadOS:
 
 ```sh
 export ISPAD=1
@@ -55,14 +59,18 @@ echo 'export ISPAD=1' >> ~/.profile
 aw-cli -h
 ```
 
-```sh
-aw-cli -v
-```
-
 ## Avvio
 
 ```sh
 aw-cli
+```
+
+## Aggiornamento futuro
+
+Per aggiornare il programma dalla repo online:
+
+```sh
+python3 -m pip install --upgrade git+https://github.com/VenomDrake/anime-pad.git
 ```
 
 ## Download su iPad e iSH
@@ -81,19 +89,19 @@ ls ~/Documents/Anime
 
 ## Note
 
-Questa versione nasce per riprendere e adattare il progetto all’utilizzo su iOS e iPadOS tramite iSH Shell.
+Questa versione nasce per riprendere e adattare il progetto originale all’utilizzo su iOS e iPadOS tramite iSH Shell.
 
-Il progetto originale `aw-cli` è stato creato e mantenuto da fexh10 ed è disponibile su GitHub. Il README originale indica che `aw-cli` permette di guardare anime dal terminale, usando fonti come AnimeWorld e AnimeUnity, con supporto a VLC, MPV e fzf.
-Fonte: [https://github.com/fexh10/aw-cli](https://github.com/fexh10/aw-cli)
+Il progetto originale `aw-cli` è stato creato e mantenuto da fexh10 ed è disponibile su GitHub. Il README originale indica che `aw-cli` permette di guardare anime dal terminale, usando fonti come AnimeWorld e AnimeUnity.
+
+Fonte:  
+https://github.com/fexh10/aw-cli
 
 ## Crediti
 
-Progetto originale:
-[https://github.com/fexh10/aw-cli](https://github.com/fexh10/aw-cli)
+Progetto originale:  
+https://github.com/fexh10/aw-cli
+
+Versione modificata:  
+https://github.com/VenomDrake/anime-pad
 
 Tutti i crediti principali vanno agli autori originali del progetto `aw-cli`.
-
-```
-
-Ho mantenuto i comandi separati, così restano facili da copiare uno alla volta.
-```
