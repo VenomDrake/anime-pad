@@ -1,5 +1,3 @@
-Ecco il `README.md` aggiornato con i nuovi comandi per la tua repo `VenomDrake/anime-pad`.
-
 ````md
 # anime-pad per iOS e iPadOS tramite iSH Shell
 
