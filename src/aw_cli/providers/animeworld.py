@@ -1,9 +1,9 @@
-from functools import lru_cache
 import re
 from html import unescape
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 from ..anime import Anime, AnimeStatus
-from .provider import Provider, HTTPError
+from .provider import Provider, HTTPError, media_url
+from .html import Tags
 
 class Animeworld(Provider):
     """
@@ -19,7 +19,6 @@ class Animeworld(Provider):
         super().__init__("https://www.animeworld.ac")
         self._visited = {}
 
-    @lru_cache
     def _get_html(self, url: str) -> str:
         """
         Ottiene l'html della pagina web `url`.
@@ -45,6 +44,7 @@ class Animeworld(Provider):
                 raise HTTPError("Errore: Cookies non trovati")
             self.Client.cookies.set(match.group(1), match.group(2))
             response = self.Client.get(url)
+            response.raise_for_status()
 
         if response.status_code != 200 or "Errore 404" in response.text:
             raise HTTPError("Errore 404: pagina non trovata")
@@ -59,8 +59,9 @@ class Animeworld(Provider):
 
         animes = list[Anime]()
         # prendo i link degli anime relativi alla ricerca
-        for url, name in re.findall(r'<div class="inner">(?:.|\n)+?<a href="([^"]+)"\s+data-jtitle="[^"]+"\s+class="name">([^<]+)', html):
-            animes.append(Anime(unescape(name), self.BASE_URL+url))
+        for attrs, name in Tags(html, "a").items:
+            if "name" in attrs.get("class", "").split() and attrs.get("href") and name:
+                animes.append(Anime(name, urljoin(self.BASE_URL, attrs["href"])))
 
         return animes
 
@@ -68,14 +69,19 @@ class Animeworld(Provider):
         html = self._get_html(self.BASE_URL)
         animes = list[Anime]()
 
-        for url, name, ep in re.findall(r'<a[\n\s]+href="([^"]+)"\n\s+class="poster" data-tip="[^"]+"\n\s+title="([^"]+) Ep ([^"]+)">', html):
-            anime = Anime(unescape(name), self.BASE_URL + url, ep)
-            anime.update_episodes({ep: self.BASE_URL + url}, specials=specials)
+        for attrs, _ in Tags(html, "a").items:
+            match = re.fullmatch(r"(.+) Ep\.? ([\d.-]+)", attrs.get("title", ""))
+            if "poster" not in attrs.get("class", "").split() or not match or not attrs.get("href"):
+                continue
+            name, ep = match.groups()
+            url = urljoin(self.BASE_URL, attrs["href"])
+            anime = Anime(name, url, ep)
+            anime.update_episodes({ep: url}, specials=specials)
             animes.append(anime)
 
         BLOCK_SIZE = 45
         filter_keys = ['a', 's', 'd', 't']
-        multiplier = filter_keys.index(filter[0])
+        multiplier = filter_keys.index(filter[0]) if filter and filter[0] in filter_keys else 0
 
         start = multiplier * BLOCK_SIZE
         end = (multiplier + 1) * BLOCK_SIZE if multiplier < len(filter_keys) else None
@@ -85,23 +91,45 @@ class Animeworld(Provider):
     def _episodes(self, anime: Anime):
         html = self._get_html(anime.ref)
         episodes_url = dict[str, str]()
-        for num, url in re.findall(r'<a.+data-num="([^"]+)".+href="([^"]+)"', html):
-            episodes_url[num] = self.BASE_URL + url
+        for attrs, _ in Tags(html, "a").items:
+            num, url = attrs.get("data-num", ""), attrs.get("href")
+            if re.fullmatch(r"\d+(?:\.\d+|-\d+)?", num) and url:
+                episodes_url[num] = urljoin(self.BASE_URL, url)
         return episodes_url
 
     def _episode_link(self, anime: Anime, episode: Anime.Episode) -> str:
-        pattern = r'<a\s+href="([^"]+)"\s+id="alternativeDownloadLink"'
         html = self._get_html(episode.ref)
-        res = re.search(pattern, html)
-        if not res:
-            raise ValueError("Errore nel parsing della pagina dell'episodio")
-        return res.group(1)
+        for attrs, _ in Tags(html, "a").items:
+            if attrs.get("id") == "alternativeDownloadLink" and attrs.get("href"):
+                return media_url(urljoin(episode.ref, attrs.get("href", "")))
+        # Le pagine recenti caricano i link tramite la stessa API usata dal sito.
+        token = next((attrs.get("content") for attrs, _ in Tags(html, "meta").items if attrs.get("name") == "csrf-token"), None)
+        episode_id = next((attrs.get("data-episode-id") for attrs, _ in Tags(html, "a").items
+                           if attrs.get("data-num") == episode.num and urljoin(self.BASE_URL, attrs.get("href", "")) == episode.ref), None)
+        if not token or not episode_id or not episode_id.isdigit():
+            raise ValueError("Metadati dell'episodio o link video non disponibili")
+        response = self.Client.post(
+            f"{self.BASE_URL}/api/download/{episode_id}",
+            headers={"CSRF-Token": token, "Referer": episode.ref, "X-Requested-With": "XMLHttpRequest"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("error"):
+            raise ValueError("La fonte non rende disponibile il download di questo episodio")
+        links = payload.get("links", {}).get("9", {}).get(episode.num, {})
+        link = links.get("alternativeLink") or links.get("link")
+        if not link:
+            raise ValueError("La fonte non fornisce un link video diretto per questo episodio")
+        return media_url(link)
 
     def _info_anime(self, anime: Anime):
         html = self._get_html(anime.ref)
 
-        res = re.search(r'<a.*id="anilist-button".*href="\D*(\d*)"', html)
-        anilist_id = int(res.group(1)) if res else 0
+        anilist_id = 0
+        for attrs, _ in Tags(html, "a").items:
+            if attrs.get("id") == "anilist-button":
+                match = re.search(r"/anime/(\d+)", attrs.get("href", ""))
+                anilist_id = int(match.group(1)) if match else 0
 
         temp = re.findall(r'<dt>(.*?):</dt>[\n\s]*<dd(?: class="[^"]*")?>((?:.|\n)+?)</dd>', html)
         plot_match = re.search(r'<div class="desc">((?:.|\n)+?)</div>', html)

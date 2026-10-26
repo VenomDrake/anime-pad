@@ -2,14 +2,17 @@ import subprocess
 import sys
 import re
 import argparse
-import urllib.request
+import ast
+import shlex
+import shutil
+from rich.prompt import Prompt
 
 import aw_cli.utilities as ut
 
 
 class Fzf:
     """
-    Wrapper attorno a fzf con supporto per il reload dinamico tramite --listen.
+    Menu fzf, con alternativa numerica compatibile con iSH.
     """
 
     _DEFAULTS: dict[str, str | bool] = {
@@ -18,9 +21,6 @@ class Fzf:
         "ansi": True,
         "tiebreak": "begin",
     }
-
-    def __init__(self):
-        self._port: int = ut.config_data.get("fzf", {}).get("port", 4321)
 
     def run(
         self,
@@ -39,7 +39,11 @@ class Fzf:
             filter:   se True abilita il filtro per range (formato: inizio-fine).
         """
         cmd = self._build_cmd(elements=elements, prompt=prompt, multi=multi, filter=filter)
-
+        elements = [str(element) for element in elements]
+        if not elements:
+            raise ValueError("Nessuna voce disponibile nel menu")
+        if ut.os_name == "iSH" or not shutil.which("fzf"):
+            return self._numbered_menu(elements, prompt, multi)
         try:
             while True:
                 process = subprocess.run(
@@ -50,37 +54,58 @@ class Fzf:
                     stderr=None,
                 )
 
-                if process.returncode == 130:
-                    exit()
+                if process.returncode in {1, 130}:
+                    raise SystemExit(0)
+
+                if process.returncode != 0:
+                    ut.console.print("Menu fzf non disponibile: uso il menu numerico.", style="warning")
+                    return self._numbered_menu(elements, prompt, multi)
 
                 if process.stdout.strip():
                     return process.stdout.strip()
+                raise SystemExit(0)
+        except OSError:
+            return self._numbered_menu(elements, prompt, multi)
         except KeyboardInterrupt:
             exit()
 
-    def reload(self, new_elements: list[str]) -> None:
-        """
-        Invia un comando reload all'istanza fzf in ascolto tramite --listen.
-
-        Args:
-            new_elements: nuove voci con cui aggiornare la lista di fzf.
-        """
-
-        escaped = "\n".join(e.replace("'", "'\\''") for e in new_elements)
-        action = f"reload(printf '{escaped}')"
-
-        req = urllib.request.Request(
-            f"http://localhost:{self._port}",
-            data=action.encode(),
-            method="POST",
-        )
-        req.add_header("Content-Type", "text/plain")
-
-        try:
-            with urllib.request.urlopen(req, timeout=3):
-                pass
-        except OSError:
-            pass
+    def _numbered_menu(self, elements: list[str], prompt: str, multi: bool) -> str:
+        page = 0
+        size = 20
+        while True:
+            start = page * size
+            for i, element in enumerate(elements[start:start + size], start + 1):
+                plain = re.sub(r"\x1b\[[0-9;]*m", "", element)
+                ut.console.print(f"{i}) {plain}", markup=False)
+            ut.console.print("n: avanti, p: indietro, q: esci" + ("; più voci: 1,3-5 oppure * per tutte" if multi else ""))
+            choice = Prompt.ask(prompt, console=ut.console).strip().lower()
+            if choice in {"q", "exit"}:
+                raise SystemExit(0)
+            if choice == "n":
+                page = min(page + 1, (len(elements) - 1) // size)
+                continue
+            if choice == "p":
+                page = max(0, page - 1)
+                continue
+            try:
+                if multi and choice == "*":
+                    return "\n".join(elements)
+                selected = []
+                for part in choice.split(","):
+                    bounds = part.split("-") if multi else [part]
+                    if len(bounds) > 2:
+                        raise ValueError
+                    first, last = int(bounds[0]), int(bounds[-1])
+                    if not 1 <= first <= last <= len(elements):
+                        raise ValueError
+                    for index in range(first - 1, last):
+                        if index not in selected:
+                            selected.append(index)
+                if not multi and len(selected) != 1:
+                    raise ValueError
+                return "\n".join(elements[index] for index in selected)
+            except ValueError:
+                ut.console.print("Selezione non valida.", style="error")
 
     def _build_cmd(
         self,
@@ -90,7 +115,7 @@ class Fzf:
         filter: bool = False,
     ) -> list[str]:
         """Costruisce la lista di argomenti per il processo fzf."""
-        cmd = ["fzf", "--listen", str(self._port)]
+        cmd = ["fzf"]
 
         if "height" not in self._DEFAULTS:
             cmd += [f"--height={len(elements) + 2}"]
@@ -109,7 +134,7 @@ class Fzf:
             cmd += ["--multi", "--bind", "ctrl-a:toggle-all"]
 
         if filter:
-            reload_cmd = f"{sys.executable} -m aw_cli.fzf.fzf --filter {{q}} --episodes \"{elements}\""
+            reload_cmd = f"{shlex.quote(sys.executable)} -m aw_cli.fzf.fzf --filter {{q}} --episodes {shlex.quote(repr(elements))}"
             cmd += [
                 "--phony",
                 "--bind", f"change:reload({reload_cmd})",
@@ -132,7 +157,9 @@ def _filter_episodes(query: str, episodes_raw: str) -> None:
     ha successo se i due intervalli si intersecano.
     """
 
-    episodes: list[str] = eval(episodes_raw)
+    episodes = ast.literal_eval(episodes_raw)
+    if not isinstance(episodes, list) or not all(isinstance(e, str) for e in episodes):
+        raise ValueError("Lista episodi non valida")
 
     if not query:
         print("\n".join(episodes))

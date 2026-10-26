@@ -21,7 +21,12 @@ def path(create: bool = True) -> Path:
         Path: il percorso di download dell'anime.
     """
 
-    if (ut.os_name == "Android"):
+    configured = ut.config_data.get("general", {}).get("download-path")
+    if configured:
+        path = Path(configured).expanduser()
+    elif ut.os_name == "iSH":
+        path = Path.home() / "Documents/Anime"
+    elif ut.os_name == "Android":
         path = Path("/sdcard/Movies/Anime")
     else:
         path = Path.home() / "Videos/Anime"
@@ -30,7 +35,11 @@ def path(create: bool = True) -> Path:
         path.mkdir(parents=True, exist_ok=True)
     return path
 
-def episodes(anime: Anime, episodes: list[Anime.Episode], provider: Provider) -> None:
+def episode_path(anime: Anime, episode: Anime.Episode) -> Path:
+    return path(create=False) / ut.sanitize_filename(anime.name) / (ut.sanitize_filename(str(episode)) + ".mp4")
+
+
+def episodes(anime: Anime, episodes: list[Anime.Episode], provider: Provider) -> list[Anime.Episode]:
     """
     Scarica più episodi in modo concorrente (max concurrent_downloads).
 
@@ -41,26 +50,29 @@ def episodes(anime: Anime, episodes: list[Anime.Episode], provider: Provider) ->
     """
     async def download_worker(ep: Anime.Episode, task_id: TaskID, progress: Progress, sem: asyncio.Semaphore):
         async with sem:
-            filename = path() / anime.name / f"{ep}.mp4"
+            filename = episode_path(anime, ep)
             if filename.exists():
                 progress.update(task_id, completed=100, total=100, description=f"[green]Ep. {ep.num} (Esistente)")
-                return
+                return ep
 
             filename.parent.mkdir(parents=True, exist_ok=True)
             try:
-                url = provider.episode_link(anime, ep)
+                url = await asyncio.to_thread(provider.episode_link, anime, ep)
             except Exception as e:
                 progress.console.print(f"[red]Errore link Ep. {ep.num}: {e}")
                 return
 
+            temp_filename = filename.with_name(f"{filename.name}.temp")
             try:
-                async with AsyncClient() as client:
+                async with AsyncClient(follow_redirects=True, timeout=30) as client:
                     async with client.stream("GET", url, headers=provider.Client.headers) as response:
+                        response.raise_for_status()
+                        if "text/html" in response.headers.get("content-type", "").lower():
+                            raise ValueError("La fonte ha restituito una pagina HTML anziché un video")
                         total = int(response.headers.get('content-length', 0))
                         progress.update(task_id, total=total)
 
                         downloaded = 0
-                        temp_filename = filename.with_name(f"{filename.name}.temp")
                         with open(temp_filename, "wb") as f:
                             async for chunk in response.aiter_bytes(1024):
                                 if chunk:
@@ -68,13 +80,18 @@ def episodes(anime: Anime, episodes: list[Anime.Episode], provider: Provider) ->
                                     downloaded += n
                                     progress.update(task_id, advance=n)
 
+                        if downloaded == 0:
+                            raise ValueError("Il video scaricato è vuoto")
+
                 temp_filename.rename(filename)
                 progress.update(task_id, description=f"[success]Ep. {ep.num} (Completato)[/]")
+                return ep
             except Exception as e:
+                temp_filename.unlink(missing_ok=True)
                 progress.console.print(f"[error]Errore download Ep. {ep.num}: {e}[/]")
 
     async def _download_all():
-        concurrent_downloads = ut.config_data["general"].get("parallel-downloads", 3)
+        concurrent_downloads = max(1, min(8, int(ut.config_data["general"].get("parallel-downloads", 1 if ut.os_name == "iSH" else 3))))
         semaphore = asyncio.Semaphore(concurrent_downloads)
         ordered_eps = sorted(episodes, key=lambda e: e.numeric())
 
@@ -92,6 +109,7 @@ def episodes(anime: Anime, episodes: list[Anime.Episode], provider: Provider) ->
                 task_id = progress.add_task(str(ep), total=None, start=True)
                 tasks.append(asyncio.create_task(download_worker(ep, task_id, progress, semaphore)))
 
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks)
+            return [ep for ep in results if ep is not None]
 
-    asyncio.run(_download_all())
+    return asyncio.run(_download_all())

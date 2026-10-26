@@ -3,11 +3,12 @@ import shutil
 import subprocess
 from time import sleep
 from pathlib import Path
-from signal import signal, SIGINT
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from typing import Callable
 from rich.prompt import Prompt, FloatPrompt
+from rich.text import Text
+from .providers.provider import ProviderError
 from . import (
     anilist,
     download,
@@ -27,9 +28,6 @@ from .arg_parser import (
     hist,
 )
 
-signal(SIGINT, lambda signum, frame: exit())
-
-
 def search_anime(provider: providers.Provider) -> list[Anime]:
     """
     Dato in input un nome di un anime inserito dall'utente, restituisce una lista con gli URL degli anime
@@ -43,14 +41,20 @@ def search_anime(provider: providers.Provider) -> list[Anime]:
         if s == "exit":
             exit()
         result = provider.search(s)
-        if len(result) != 0:
+        if result:
             return result
 
     ut.console.clear()
     while True:
-        query = Prompt.ask("Cerca un anime", console=ut.console)
-        if res := check_search(query):
-            return res
+        query = Prompt.ask("Cerca un anime (exit per uscire)", console=ut.console).strip()
+        if not query:
+            continue
+        try:
+            if res := check_search(query):
+                return res
+        except ProviderError as error:
+            ut.console.print(str(error), style="error", markup=False)
+            continue
         ut.console.print("La ricerca non ha prodotto risultati", style="error")
         sleep(1)
         ut.console.clear()
@@ -71,7 +75,7 @@ def select_episodes(anime: Anime) -> list[Anime.Episode]:
 
 
     ut.console.clear()
-    ut.console.print(anime.name)
+    ut.console.print(Text(anime.name))
     #se contiene solo 1 ep sarà riprodotto automaticamente
     if len(anime.episodes()) == 1:
         return anime._episodes
@@ -108,13 +112,17 @@ def open_syncplay(ep_url: str, ep_name: str, progress: int) -> tuple[bool, int]:
         exit()
 
 
-    args = f'''--force-media-title="{ep_name}" --start="{progress}" --fullscreen --keep-open'''
+    player_args = [f"--force-media-title={ep_name}", f"--start={progress}", "--fullscreen", "--keep-open"]
     if ut.config_data.get("player", {}).get("type") == "vlc":
-        args = f'''--meta-title "{ep_name}" --start-time="{progress}" --fullscreen'''
+        player_args = ["--meta-title", ep_name, f"--start-time={progress}", "--fullscreen"]
 
     try:
-        command = f'''{ut.config_data["syncplay"]["path"]} -d --language it "{ep_url}" -- {args}'''
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=False)
+        command = [ut.config_data["syncplay"]["path"], "-d", "--language", "it", ep_url, "--", *player_args]
+        if ut.os_name == "WSL":
+            command = ["/mnt/c/Windows/System32/cmd.exe", "/C", *command]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise OSError("Syncplay non è riuscito ad avviare la riproduzione")
         out = result.stdout
     except UnicodeDecodeError:
         out = ""
@@ -147,14 +155,19 @@ def open_mpv(ep_url: str, ep_name: str, progress: int) -> tuple[bool, int]:
 
 
     if (ut.os_name == "Android"):
-        subprocess.run(f'am start --user 0 -a android.intent.action.VIEW -d "{ep_url}" -n is.xyz.mpv/.MPVActivity', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True, 0
+        subprocess.run(["am", "start", "--user", "0", "-a", "android.intent.action.VIEW", "-d", ep_url, "-n", "is.xyz.mpv/.MPVActivity"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return False, progress
 
-    command = f'''{ut.config_data["player"]["path"]} "{ep_url}" --force-media-title="{ep_name}" --start="{progress}" --fullscreen --keep-open'''
-    result = subprocess.run(command, shell=True, capture_output=True, text=True, check=False)
+    command = [ut.config_data["player"]["path"], ep_url, f"--force-media-title={ep_name}", f"--start={progress}", "--fullscreen", "--keep-open"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise OSError("MPV non è riuscito ad aprire il video")
     out = result.stdout
 
-    res = re.findall(r'(\d+):(\d+):(\d+) / [\d:]+ \((\d+)%\)', out)[-1]
+    matches = re.findall(r'(\d+):(\d+):(\d+) / [\d:]+ \((\d+)%\)', out)
+    if not matches:
+        return False, progress
+    res = matches[-1]
     progress = (int(res[0]) * 3600) + (int(res[1]) * 60) + int(res[2])
 
     return int(res[3]) >= complete_limit, progress
@@ -174,10 +187,10 @@ def open_vlc(ep_url: str, ep_name: str, progress: int) -> tuple[bool, int]:
     """
 
     if ut.os_name == "Android":
-        subprocess.run(f'am start --user 0 -a android.intent.action.VIEW -d "{ep_url}" -n org.videolan.vlc/.StartActivity -e "title" "{ep_name}"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True, 0
+        subprocess.run(["am", "start", "--user", "0", "-a", "android.intent.action.VIEW", "-d", ep_url, "-n", "org.videolan.vlc/.StartActivity", "-e", "title", ep_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return False, progress
 
-    subprocess.run(f'{ut.config_data["player"]["path"]} "{ep_url}" --meta-title "{ep_name}" --start-time="{progress}" --fullscreen', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([ut.config_data["player"]["path"], ep_url, "--meta-title", ep_name, f"--start-time={progress}", "--fullscreen"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # se il file di configurazione di VLC esiste, prendo la posizione dell'ultimo episodio riprodotto
     progress = 0
@@ -185,13 +198,24 @@ def open_vlc(ep_url: str, ep_name: str, progress: int) -> tuple[bool, int]:
     if vlc_config_path.exists():
         with open(vlc_config_path, "r") as file:
             config = [line.strip() for line in file.readlines()]
+        try:
             index = config.index("[RecentsMRL]")
-            urls = config[index + 1].split("=")[1].split(", ")
-            positions = config[index + 2].split("=")[1].split(", ")
-        progress = int(positions[urls.index(ep_url)]) // 1000 if ep_url in urls else 0
+            urls = config[index + 1].split("=", 1)[1].split(", ")
+            positions = config[index + 2].split("=", 1)[1].split(", ")
+            progress = int(positions[urls.index(ep_url)]) // 1000 if ep_url in urls else 0
+        except (ValueError, IndexError):
+            progress = 0
 
-    # Non informazioni sulla durata: suppongo che sia completato
-    return True, progress
+    return False, progress
+
+
+def open_link(ep_url: str, ep_name: str, progress: int) -> tuple[bool, int]:
+    """iSH non può eseguire i player iOS come programmi Linux."""
+    ut.console.print(Text(ep_name))
+    ut.console.print("Apri il link in un player esterno o nel browser; per i file locali usa l'app File:")
+    ut.console.print(ep_url, markup=False, soft_wrap=True)
+    completed = Prompt.ask("Quando torni: episodio completato?", choices=["s", "n"], default="n", console=ut.console) == "s"
+    return completed, 0 if completed else progress
 
 def update_anilist(anime: Anime, episode: Anime.Episode, anilist_rating: float|None, drop: bool = False) -> None:
     """
@@ -250,33 +274,37 @@ def watch_episode(anime: Anime, episode: Anime.Episode, provider: providers.Prov
         episode (Anime.Episode): l'episodio da riprodurre.
         provider (Provider): il provider da cui prendere il link dell'episodio.
     """
-    anilist_rating = None
-    if not (offline or private) and "anilist" in ut.config_data:
-        executor = ThreadPoolExecutor(max_workers=1)
-        anilist_rating = executor.submit(anilist.get_anime_private_rating, ut.config_data["anilist"]["token"], ut.config_data["anilist"]["user_id"], anime.anilist_id)
-
     #se il video è già stato scaricato lo riproduco invece di farlo in streaming
-    path = f"{download.path(create=False)}/{anime.name}/{episode}.mp4"
+    path = download.episode_path(anime, episode)
 
     if Path(path).exists():
-        ep_url = path if ut.os_name == "Android" else "file://" + path
+        ep_url = str(path) if ut.os_name in {"Android", "iSH"} else path.resolve().as_uri()
     else:
-        ep_url = provider.episode_link(anime, episode)
+        try:
+            ep_url = provider.episode_link(anime, episode)
+        except ProviderError:
+            if open_player is not open_link or not episode.ref.startswith(("https://", "http://")):
+                raise
+            ut.console.print("Link diretto non disponibile: apri la pagina dell'episodio nel browser.", style="warning")
+            ep_url = episode.ref
 
     ut.console.clear()
-    ut.console.print(f"Riproduco {episode}...", style="info")
+    ut.console.print(f"Riproduco {episode}...", style="info", markup=False)
     completed, progress = open_player(ep_url, str(episode), episode.progress)
 
     if not private:
         episode.set_progress(progress)
         if completed:
             episode.mark_completed()
-            #update watchlist anilist se ho fatto l'accesso
-            if anilist_rating:
-                update_anilist(anime, episode, anilist_rating.result())
-
         anime.curr_ep = episode.num
         history.update(anime, episode)
+        # Il salvataggio locale deve precedere qualsiasi richiesta opzionale.
+        if completed and not offline and "anilist" in ut.config_data and anime.anilist_id:
+            try:
+                rating = anilist.get_anime_private_rating(ut.config_data["anilist"]["token"], ut.config_data["anilist"]["user_id"], anime.anilist_id)
+                update_anilist(anime, episode, rating)
+            except Exception:
+                ut.console.print("AniList non disponibile: progresso salvato nella cronologia locale.", style="warning")
 
 def setup_config() -> None:
     """
@@ -293,8 +321,11 @@ def setup_config() -> None:
     ut.console.clear()
     ut.console.print("AW-CLI - CONFIGURAZIONE", style="info")
 
-    ut.config_data["player"]["type"] = Fzf().run(["vlc","mpv"], "Scegli il player predefinito: ")
-    if ut.os_name != "Android":
+    ut.config_data["player"] = {}
+    ut.config_data["general"] = {}
+    ut.config_data["provider"] = {}
+    ut.config_data["player"]["type"] = "link" if ut.os_name == "iSH" else Fzf().run(["vlc","mpv", "link"], "Scegli il player predefinito: ")
+    if ut.os_name not in {"Android", "iSH"} and ut.config_data["player"]["type"] != "link":
         path = shutil.which(ut.config_data['player']['type'])
         if path is None:
             ut.console.print(f"Player {ut.config_data['player']['type']} non trovato!", style="error")
@@ -308,19 +339,19 @@ def setup_config() -> None:
 
 
     #provider preferito
-    ut.config_data["provider"]["source"] = Fzf().run(["animeunity", "animeworld"], "Scegli il provider: ")
+    ut.config_data["provider"]["source"] = Fzf().run(["animeworld", "animeunity"], "Scegli il provider: ")
 
     #anilist
     if Fzf().run(["sì","no"], "Aggiornare automaticamente la watchlist con AniList? ") == "sì":
         link = "https://anilist.co/api/v2/oauth/authorize?client_id=11388&response_type=token"
-        if ut.os_name == "Darwin":
-            subprocess.run(f"open '{link}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(f"xdg-open '{link}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        opener = "open" if ut.os_name == "Darwin" else "xdg-open"
+        if ut.os_name != "iSH" and shutil.which(opener):
+            subprocess.run([opener, link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         #inserimento token
         ut.console.clear()
-        ut.config_data["anilist"]["token"] = Prompt.ask(f"Inserire il token di AniList ({link})", console=ut.console)
+        ut.config_data["anilist"] = {}
+        ut.config_data["anilist"]["token"] = Prompt.ask(f"Inserire il token di AniList ({link})", console=ut.console, password=True)
 
         #prendo l'id dell'utente tramite query
         with ThreadPoolExecutor() as executor:
@@ -340,23 +371,27 @@ def setup_config() -> None:
             ut.config_data["anilist"]["user_id"]  = future.result()
 
     #syncplay
-    if ut.os_name != "Android":
+    if ut.os_name not in {"Android", "iSH"}:
         syncplay_path = shutil.which("syncplay")
         if syncplay_path is None:
             ut.console.print("Syncplay non trovato!", style="error")
             syncplay = Prompt.ask("Inserisci il path di Syncplay (premere INVIO se non lo si desidera utilizzare)", console=ut.console).replace("Program Files (x86)", "Progra~2")
             if syncplay != "":
-                ut.config_data["syncplay"]["path"] = syncplay
+                ut.config_data["syncplay"] = {"path": syncplay}
         else:
-            ut.config_data["syncplay"]["path"] = syncplay_path
+            ut.config_data["syncplay"] = {"path": syncplay_path}
 
     # style
     ut.config_data["style"] = ut.DEFAULT_STYLE
 
     #creo il file
-    config = Path(__file__).parent / "config.toml"
-    with open(config, 'w') as f:
+    config = ut.config_path()
+    temporary = config.with_suffix(".toml.tmp")
+    temporary.touch(mode=0o600, exist_ok=True)
+    temporary.chmod(0o600)
+    with open(temporary, 'w', encoding="utf-8") as f:
         ut.toml.dump(ut.config_data, f)
+    temporary.replace(config)
 
 def list_anime_names(animelist: list[Anime]) -> list[str]:
     """
@@ -379,7 +414,7 @@ def list_anime_names(animelist: list[Anime]) -> list[str]:
         name = f"\033[0;3{colour}m{i + 1}  \033[0;37m"
 
         if hist:
-            name += f"{a.name} [Ep {a.curr_ep}/{a.info['Episodi']}]"
+            name += f"{a.name} [Ep {a.curr_ep}/{a.info.get('Episodi', '??')}]"
         elif latest:
             name += f"{a.name} [Ep {a.curr_ep}]"
         else:
@@ -448,16 +483,16 @@ def create_ep_menu(anime: Anime, episode: Anime.Episode) -> dict[str, Callable[[
     return {k: v for k, v in actions.items() if conditions.get(k, True)}
 
 
-def main():
+def _main():
     global open_player
     global history
 
     #se il file di configurazione non esiste viene chiesto all'utente di fare il setup
-    if args.start_config or not (Path(__file__).parent / "config.toml").exists():
+    if args.start_config or not ut.config_path().exists():
         setup_config()
 
     ut.get_config()
-    history = History.read(str(Path(__file__).parent))
+    history = History.read(str(ut.history_dir()))
 
     if offline:
         from .providers.local import LocalProvider
@@ -471,9 +506,10 @@ def main():
                 from .providers.animeworld import Animeworld
                 provider = Animeworld()
 
-    if ut.config_data["player"]["type"] == "vlc":
-        open_player = open_vlc
-    if ut.os_name != "Android" and args.syncpl:
+    open_player = {"vlc": open_vlc, "mpv": open_mpv, "link": open_link}.get(ut.config_data["player"]["type"], open_mpv)
+    if ut.os_name == "iSH":
+        open_player = open_link
+    if ut.os_name not in {"Android", "iSH"} and args.syncpl:
         open_player = open_syncplay
 
     fzf = Fzf()
@@ -496,15 +532,17 @@ def main():
                 exit()
 
         if hist and history.has_ongoing() and args.history != 'r' and not offline:
-            def background_reload():
+            def refresh_history():
                 history.reload(provider.latest())
-                animelist_updated = history.get()
-                fzf.reload(list_anime_names(animelist_updated))
-            Thread(target=background_reload, daemon=True).start()
+            try:
+                refresh_history()
+            except ProviderError as error:
+                ut.console.print(str(error), style="warning", markup=False)
 
         ut.console.clear()
         prompt = "Scegli un anime: " if args.history != 'r' else "Rimuovi un anime: "
         selected_anime = fzf.run(list_anime_names(animelist), prompt)
+        selected_anime = re.sub(r"\x1b\[[0-9;]*m", "", selected_anime)
         selected = int(selected_anime.split("  ")[0]) - 1
         anime = animelist[selected]
 
@@ -514,10 +552,10 @@ def main():
 
         try:
             provider.info_anime(anime)
-        except LookupError as error:
+        except (LookupError, ProviderError) as error:
             ut.console.print(str(error), style="error")
             ut.console.print("Cercarlo manualmente", style="highlight")
-            exit()
+            continue
 
         if info:
             ut.console.clear()
@@ -527,7 +565,11 @@ def main():
                 continue
 
         if len(anime.episodes()) == 0:
-            provider.episodes(anime)
+            try:
+                provider.episodes(anime)
+            except ProviderError as error:
+                ut.console.print(str(error), style="error", markup=False)
+                continue
 
         if len(anime.episodes()) == 0:
             ut.console.print("Eh, volevi! L'anime non è ancora stato rilasciato", style="error")
@@ -535,6 +577,8 @@ def main():
             reload = False
             continue
 
+        if (hist or latest) and not anime.has_episode(anime.curr_ep):
+            anime.curr_ep = anime.episodes()[0]
         if hist and anime.episode(anime.curr_ep).is_completed():
             if not anime.episode(anime.curr_ep).has_next():
                 ut.console.print(f"L'episodio {anime.episode(anime.curr_ep).numeric() + 1} di {anime.name} non è ancora stato rilasciato!", style="error")
@@ -552,10 +596,13 @@ def main():
         episode = episodes[0]
 
         if downl:
-            download.episodes(anime, episodes, provider)
+            downloaded = download.episodes(anime, episodes, provider)
+            if not downloaded:
+                continue
+            episode = downloaded[0]
 
             anime.curr_ep = episode.num
-            if not any(anime == a for a in history.get()):
+            if not private and not any(anime == a for a in history.get()):
                 history.update(anime, episode)
 
             answer = Fzf().run(["esci","indietro","guarda"])
@@ -564,18 +611,24 @@ def main():
             if answer == "indietro":
                 continue
 
-        needs_fetch = not anime.has_all_episodes()
-        if needs_fetch and not offline:
-            Thread(target=provider.episodes, args=(anime,), daemon=True).start()
+        if not anime.has_all_episodes() and not offline:
+            try:
+                provider.episodes(anime)
+            except ProviderError as error:
+                ut.console.print(str(error), style="warning", markup=False)
 
         while True:
-            watch_episode(anime, episode, provider)
+            try:
+                watch_episode(anime, episode, provider)
+            except (ProviderError, OSError, subprocess.SubprocessError) as error:
+                ut.console.print(str(error), style="error", markup=False)
+                break
 
             # menù che si visualizza dopo aver finito la riproduzione
             menu_actions = create_ep_menu(anime, episode)
 
             res = menu_actions[Fzf().run(list(menu_actions.keys()))]()
-            if res == "break":
+            if not isinstance(res, Anime.Episode):
                 break
             episode = res
 
@@ -584,6 +637,17 @@ def main():
 history = History()
 open_player = open_mpv
 complete_limit = 90
+
+
+def main():
+    try:
+        _main()
+    except (KeyboardInterrupt, EOFError):
+        return
+    except (ProviderError, OSError, ValueError, KeyError, subprocess.SubprocessError, anilist.TokenError) as error:
+        ut.console.print(f"Impossibile continuare: {error}", style="error", markup=False)
+        ut.console.print("Controlla la connessione e la configurazione con aw-cli -a.")
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()

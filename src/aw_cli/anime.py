@@ -66,13 +66,13 @@ class Anime:
 
         return hash(self.name)
 
-    def update_episodes(self, episodes: dict[str, str] = {}, specials: bool = True) -> None:
+    def update_episodes(self, episodes: dict[str, str] | None = None, specials: bool = True) -> None:
         """
         Imposta i riferimenti degli episodi dell'anime.
         Args:
             episodes (dict[str, str]): dizionario dei riferimenti degli episodi dell'anime (numero->URL/ID).
         """
-        for num, ref in episodes.items():
+        for num, ref in (episodes or {}).items():
             if not specials and ("." in num or num == "0"):
                 continue
             if self.has_episode(num):
@@ -83,8 +83,12 @@ class Anime:
         self._episodes.sort()
         self._num_to_index = {ep.num: i for i, ep in enumerate(self._episodes)}
 
-        if self.has_episode(self.last_ep) and self._episodes[-1] > self.episode(self.last_ep):
-            self.last_ep = self._episodes[-1].num
+        if self._episodes and (not self.has_episode(self.last_ep) or self._episodes[-1] > self.episode(self.last_ep)):
+            try:
+                if self._episodes[-1].numeric() >= int(float(self.last_ep)):
+                    self.last_ep = self._episodes[-1].num
+            except ValueError:
+                self.last_ep = self._episodes[-1].num
 
     def episodes(self) -> list[str]:
         """
@@ -127,7 +131,7 @@ class Anime:
         self.anilist_id = anilist_id
         self.info = info
         self.status = status
-        self.dub = info.get("Audio", "").lower() == "italiano"
+        self.dub = str(info.get("Audio", "")).lower() == "italiano" or "(ITA)" in self.name
 
     def effective_episodes_count(self) -> int:
         """

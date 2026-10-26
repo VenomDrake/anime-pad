@@ -1,7 +1,19 @@
 from abc import ABC, abstractmethod
+from functools import wraps
+from urllib.parse import urlsplit
 from httpx import Client, HTTPError  # , AsyncClient
 from ..anime import Anime
 from .. import utilities as ut
+
+
+class ProviderError(RuntimeError):
+    """Errore della fonte remota, presentabile senza un traceback."""
+
+
+def media_url(value: str) -> str:
+    if not isinstance(value, str) or urlsplit(value).scheme not in {"http", "https"} or not urlsplit(value).netloc:
+        raise ValueError("Link video non valido")
+    return value
 
 
 def error_handler(relink=False):
@@ -10,17 +22,22 @@ def error_handler(relink=False):
     """
 
     def decorator(func):
+        @wraps(func)
         def wrapper(self, *args, **kwargs):
             try:
-                return func(self, *args, **kwargs)
-            except Exception as e:
-                if relink and isinstance(e, HTTPError):
+                try:
+                    return func(self, *args, **kwargs)
+                except HTTPError:
+                    if not relink:
+                        raise
                     return update_link(self, func, *args, **kwargs)
-                ut.console.print(
-                    f"Errore {e.__class__.__name__} durante {func.__name__}: {e}",
-                    style="error",
-                )
-                return None
+            except ProviderError:
+                raise
+            except Exception as e:
+                raise ProviderError(
+                    f"{self.__class__.__name__}: errore durante {func.__name__} "
+                    f"({type(e).__name__}: {e}). Verifica la connessione o cambia provider con aw-cli -a."
+                ) from e
 
         return wrapper
 
@@ -85,6 +102,8 @@ class Provider(ABC):
         """
         ut.console.print("Ricerco...", style="warning")
         res = self._search(input)
+        if not isinstance(res, list):
+            raise ValueError("La fonte non ha restituito una lista di risultati")
         for anime in res:
             anime.name = ut.sanitize_filename(anime.name)
         return res
@@ -112,6 +131,7 @@ class Provider(ABC):
 
         grouped_animes: dict[str, list[Anime]] = {}
         for anime in animes:
+            anime.name = ut.sanitize_filename(anime.name)
             grouped_animes.setdefault(anime.name, []).append(anime)
 
         for group in grouped_animes.values():
@@ -168,7 +188,10 @@ class Provider(ABC):
         Returns:
             str: il link.
         """
-        return self._episode_link(anime, episode)
+        link = self._episode_link(anime, episode)
+        if not link:
+            raise ValueError("Link video non disponibile")
+        return link
 
     @abstractmethod
     def _episode_link(self, anime: Anime, episode: Anime.Episode) -> str:
