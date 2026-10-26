@@ -1,4 +1,5 @@
 import httpx
+from . import utilities as ut
 
 class TokenError(Exception):
     pass
@@ -63,13 +64,12 @@ def get_user_id(token: str) -> int:
     """
 
     headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'}
-    response = httpx.post('https://graphql.anilist.co', headers=headers, json={'query': query})
-    if response.status_code != 200:
-        raise TokenError("Errore: Token AniList sbagliato")
-
-    user_id = int(response.json()["data"]["Viewer"]["id"])
-
-    return user_id
+    try:
+        response = httpx.post('https://graphql.anilist.co', headers=headers, json={'query': query}, timeout=10)
+        response.raise_for_status()
+        return int(response.json()["data"]["Viewer"]["id"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        raise TokenError("AniList non disponibile o token non valido. Riprova la configurazione.") from error
 
 def get_anime_private_rating(token, user_id, anime_id: int) -> (float | None):
     """
@@ -101,11 +101,12 @@ def get_anime_private_rating(token, user_id, anime_id: int) -> (float | None):
         'Content-Type': 'application/json', 'Accept': 'application/json'
     }
 
-    response = httpx.post('https://graphql.anilist.co', headers=headers, json={'query': query, 'variables': var})
-    if response.status_code != 200:
+    try:
+        response = httpx.post('https://graphql.anilist.co', headers=headers, json={'query': query, 'variables': var}, timeout=10)
+        response.raise_for_status()
+        return float(response.json()["data"]["MediaList"]["score"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
         return None
-    
-    return float(response.json()["data"]["MediaList"]["score"])
 
 def make_anilist_request(token: str, query: str, var: dict) -> None:
     """
@@ -119,7 +120,10 @@ def make_anilist_request(token: str, query: str, var: dict) -> None:
     """
 
     header_anilist = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'}
-    risposta = httpx.post('https://graphql.anilist.co', headers=header_anilist, json={'query': query, 'variables': var})
-
-    if risposta.status_code != 200:
-        print("Impossibile aggiornare AniList!")
+    try:
+        response = httpx.post('https://graphql.anilist.co', headers=header_anilist, json={'query': query, 'variables': var}, timeout=10)
+        response.raise_for_status()
+        if response.json().get("errors"):
+            raise ValueError("AniList ha rifiutato l'aggiornamento")
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        ut.console.print("Impossibile aggiornare AniList; la cronologia locale resta disponibile.", style="warning")

@@ -7,12 +7,8 @@ license = "GPL-3.0"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
-    "pip-system-certs>=5.2",
-    "pydantic>=2.12.5",
-    "regex>=2025.9.18",
     "rich>=13.9.4",
     "toml>=0.10.2",
-    "wheel>=0.45.1",
 ]
 
 [project.scripts]
@@ -24,6 +20,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
 
 [dependency-groups]
 dev = [

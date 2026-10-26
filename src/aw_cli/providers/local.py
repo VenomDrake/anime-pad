@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from .provider import Provider, Anime
 
 class LocalProvider(Provider):
@@ -23,11 +24,15 @@ class LocalProvider(Provider):
             return []
 
         for item in base_path.iterdir():
+            if not item.is_dir():
+                continue
             name = item.name
             anime = Anime(name, "local")
             if anime in self.history:
                 self.episodes(anime)
                 self.info_anime(anime)
+                if not anime.episodes():
+                    continue
                 anime.curr_ep = anime.episodes()[0]
                 animes.append(anime)
         return animes
@@ -42,14 +47,15 @@ class LocalProvider(Provider):
         if not base_path.exists():
             return {}
 
-        filenames = [p.name for p in base_path.iterdir()]
+        filenames = [p.name for p in base_path.iterdir() if p.is_file() and p.suffix == ".mp4" and "Ep. " in p.name]
         if len(filenames) == 0:
             return {}
 
         episodes = dict[str, str]()
         for filename in filenames:
-            num = filename.split("Ep. ")[1].split(".mp4")[0]
-            episodes[num] = filename
+            num = filename.rsplit("Ep. ", 1)[1][:-4]
+            if re.fullmatch(r"\d+(?:\.\d+|-\d+)?", num):
+                episodes[num] = filename
         return episodes
 
     def _episode_link(self, anime: Anime, episode: Anime.Episode) -> str:
@@ -58,4 +64,4 @@ class LocalProvider(Provider):
     def _info_anime(self, anime: Anime):
         other = self.history[self.history.index(anime)]
         anime.ref = other.ref
-        anime.set_info(other.anilist_id, anime.status, other.info)
+        anime.set_info(other.anilist_id, other.status, other.info.copy())

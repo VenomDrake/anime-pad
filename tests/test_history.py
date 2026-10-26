@@ -47,23 +47,16 @@ def test_no_file_found(monkeypatch):
 
     assert history.get() == []
 
-def test_legacy(monkeypatch):
-    mock_file_writer = mock_open().return_value
+def test_legacy(monkeypatch, tmp_path):
     mock_sequencer = MockSequencer([
         FileNotFoundError("history.json"),
         mock_open(read_data=legacy_data).return_value,
-        mock_file_writer
     ])
-
-    monkeypatch.setattr('builtins.open', lambda *args, **kwargs: mock_file_writer)
-    monkeypatch.setattr('builtins.open', mock_sequencer)
-
-    History.read("ProvaPath").save()
-
-    output_strings = [call.args[0] for call in mock_file_writer.write.call_args_list]
-    complete_output = "".join(output_strings)
-
-    assert complete_output == json_data
+    with monkeypatch.context() as context:
+        context.setattr('builtins.open', mock_sequencer)
+        history = History.read(str(tmp_path))
+    history.save()
+    assert (tmp_path / "history.json").read_text() == json_data
 
 def test_load_existing(monkeypatch):
     """
@@ -89,14 +82,9 @@ def test_load_existing(monkeypatch):
     ]
 
 @pytest.fixture
-def history_with_data(monkeypatch):
-    mock_sequencer = MockSequencer([
-        mock_open(read_data=json_data).return_value,
-        mock_open().return_value
-    ])
-    monkeypatch.setattr('builtins.open', mock_sequencer)
-
-    return History.read("ProvaPath")
+def history_with_data(tmp_path):
+    (tmp_path / "history.json").write_text(json_data)
+    return History.read(str(tmp_path))
 
 def test_remove_anime(history_with_data):
     history = history_with_data

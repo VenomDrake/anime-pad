@@ -1,13 +1,18 @@
-import sys
 import argparse
 from .utilities import os_name
-from importlib.metadata import version
+from importlib.metadata import version, PackageNotFoundError
 from .update import update
 
 class Update(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         update(str(values) if values else "")
         parser.exit()
+
+
+try:
+    package_version = version("aw-cli")
+except PackageNotFoundError:
+    package_version = "versione sorgente"
 
 # args
 downl = False
@@ -39,13 +44,14 @@ info_group.add_argument(
     '-v',
     '--versione',
     action='version',
-    version=version("aw-cli"), help="stampa la versione del programma"
+    version=package_version, help="stampa la versione del programma"
 )
 
 options_group.add_argument(
     '-c',
     '--cronologia',
     nargs='?',
+    const=True,
     choices=['r'], dest='history',
     help='continua a guardare un anime dalla cronologia. \'r\' per rimuovere un anime (opzionale)'
 )
@@ -54,6 +60,7 @@ options_group.add_argument(
     '-l',
     '--lista',
     nargs='?',
+    const='a',
     choices=['a', 's', 'd', 't'],
     dest='latest',
     help="lista degli ultimi anime usciti. Filtri: a = all, s = sub, d = dub, t = tendenze. Default 'a'"
@@ -118,21 +125,9 @@ config_group.add_argument(
 
 args = parser.parse_args()
 
-if args.offline:
-    offline = True
-    hist = True
-elif args.history == 'r':
-        hist = True
-else:
-    if args.info:
-        info = True
-    if args.download:
-        downl = True
-    if args.latest or '-l' in sys.argv:
-        if args.latest is None:
-            args.latest = 'a'
-        latest = True
-    if args.private:
-        private = True
-    if '-c' in sys.argv:
-        hist = True
+offline = args.offline
+private = args.private
+info = args.info
+hist = offline or args.history is not None
+latest = not offline and args.latest is not None and args.history != 'r'
+downl = args.download and not offline and args.history != 'r'

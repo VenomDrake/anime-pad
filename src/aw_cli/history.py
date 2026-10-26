@@ -8,9 +8,9 @@ class History:
     """
     Classe che gestisce la cronologia degli anime.
     """
-    def __init__(self, path: str = "", anime_log: list[Anime] = []):
+    def __init__(self, path: str = "", anime_log: list[Anime] | None = None):
         self._path = path
-        self._anime_log = anime_log
+        self._anime_log = list(anime_log) if anime_log is not None else []
 
     @classmethod
     def read(cls, path: str) -> "History":
@@ -102,13 +102,17 @@ class History:
         """
         Salva la cronologia su un file JSON.
         """
-        with open(self._path, 'w', encoding='utf-8') as file:
+        target = Path(self._path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".json.tmp")
+        with open(temporary, 'w', encoding='utf-8') as file:
             json.dump(
                 [anime.to_dict() for anime in self._anime_log],
                 file,
                 ensure_ascii=False,
                 indent=4
             )
+        temporary.replace(target)
 
 def legacy() -> list[Anime]:
     """
